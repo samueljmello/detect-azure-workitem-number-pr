@@ -1,0 +1,94 @@
+name: Pull Request Audit
+on:
+  workflow_call:
+jobs:
+  scan:
+    name: Scan Pull Request
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.number }}
+      LABEL_TO_ADD: "missing workitem #"
+    steps:
+      - name: Compare Pull Request Title & Body
+        uses: actions/github-script@v6.3.3
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        with:
+          script: |
+            // helper function
+            function hasWorkitemNumber(message) {
+              if (message != null && message.search(/ab\#[0-9]{1,}/i) >= 0) {
+                return true;
+              }
+              return false;
+            }
+
+            if (hasWorkitemNumber(process.env.PR_TITLE) || hasWorkitemNumber(process.env.PR_BODY)) {
+              console.log("Found a match.")
+              process.exit(0);
+            }
+            console.log("No match found.")
+            process.exit(1);
+            
+      - name: Create Failing Comment & Label
+        if: failure()
+        uses: actions/github-script@v6.3.3
+        with:
+          script: |
+            
+            const message = "Please add a workitem number!";
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: process.env.PR_NUMBER
+            });
+            // only add a comment if the last comment doesn't already say this
+            if (comments.data.length == 0 || comments.data.at(-1).body !== message) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: process.env.PR_NUMBER,
+                body: message,
+              });
+            }
+            // always add the label back
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: process.env.PR_NUMBER,
+              labels: [process.env.LABEL_TO_ADD]
+            });
+            
+      - name: Create Success Comment & Remove Label
+        if: success()
+        uses: actions/github-script@v6.3.3
+        with:
+          script: |
+            const message = "Workitem number validated.";
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: process.env.PR_NUMBER
+            });
+            // only add a comment if the last comment doesn't already say this
+            if (comments.data.length == 0 || comments.data.at(-1).body !== message) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: process.env.PR_NUMBER,
+                body: message,
+              });
+            }
+            // always remove the label
+            try {
+              await github.rest.issues.deleteLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: process.env.LABEL_TO_ADD,
+              });
+            } catch(error) {
+              if (error.status !== 404) {
+                process.exit(1);
+              }
+            }
